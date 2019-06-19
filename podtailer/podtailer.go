@@ -159,6 +159,10 @@ func determineLogPattern(pod *v1.Pod, basePath string, legacyLogPaths bool) (str
 	if basePath == "" {
 		basePath = logsBasePath
 	}
+	logrus.WithFields(logrus.Fields{
+		"basePath": basePath,
+	}).Debug("Using basepath")
+
 	// Legacy pattern was:
 	// /var/log/containers/<pod_name>_<pod_namespace>_<container_name>-<container_id>.log`
 	// For now, this is still supported on newer k8s clusters with a symlink
@@ -170,6 +174,9 @@ func determineLogPattern(pod *v1.Pod, basePath string, legacyLogPaths bool) (str
 	// If it exists, assume this log patern
 	namespaceNameUIDPath := filepath.Join(basePath, "pods", fmt.Sprintf("%s_%s_%s", pod.Namespace, pod.Name, pod.UID))
 	if _, err := os.Stat(namespaceNameUIDPath); err == nil {
+		logrus.WithFields(logrus.Fields{
+			"namespaceNameUIDPath": namespaceNameUIDPath,
+		}).Debug("Using path")
 		return filepath.Join(namespaceNameUIDPath, "*", "*"), nil
 	}
 
@@ -179,6 +186,9 @@ func determineLogPattern(pod *v1.Pod, basePath string, legacyLogPaths bool) (str
 		// Some newer system pods use NAMESPACE_NAME_HASH, so we have to support that too
 		namespaceNameHashPath := filepath.Join(basePath, "pods", fmt.Sprintf("%s_%s_%s", pod.Namespace, pod.Name, hash))
 		if _, err := os.Stat(namespaceNameHashPath); err == nil {
+			logrus.WithFields(logrus.Fields{
+				"namespaceNameHashPath": namespaceNameHashPath,
+			}).Debug("Using path")
 			return filepath.Join(namespaceNameHashPath, "*", "*"), nil
 		}
 		hpath := filepath.Join(basePath, "pods", hash)
@@ -231,6 +241,10 @@ func determineLogPattern(pod *v1.Pod, basePath string, legacyLogPaths bool) (str
 				// if we find at least one directory in the path, assume k8s
 				// 1.10 pattern
 				if s.IsDir() {
+					logrus.WithFields(logrus.Fields{
+						"upath":    upath,
+						"wildcard": "*/*",
+					}).Debug("Using path")
 					return filepath.Join(upath, "*", "*"), nil
 				}
 			}
@@ -238,6 +252,10 @@ func determineLogPattern(pod *v1.Pod, basePath string, legacyLogPaths bool) (str
 
 		// older pattern is
 		// /var/log/pods/<podUID>/<containerName>_<instance#>.log
+		logrus.WithFields(logrus.Fields{
+			"upath":    upath,
+			"wildcard": "*",
+		}).Debug("Using path")
 		return filepath.Join(upath, "*"), nil
 	}
 	return "", fmt.Errorf("Could not find specified log path for pod %s", pod.UID)
