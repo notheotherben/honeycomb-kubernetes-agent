@@ -55,7 +55,7 @@ func init() {
 	libhoney.UserAgentAddition = fmt.Sprintf("kubernetes/" + version.VERSION)
 	logrus.WithFields(logrus.Fields{
 		"version": version.VERSION,
-	}).Debug("Initializing agent")
+	}).Info("Initializing agent")
 }
 
 func main() {
@@ -132,6 +132,9 @@ func main() {
 
 	for _, watcherConfig := range config.Watchers {
 		for _, path := range watcherConfig.FilePaths {
+			logrus.WithFields(logrus.Fields{
+				"path": path,
+			}).Debug("FilePath specified in config")
 			handlerFactory, err := handlers.NewLineHandlerFactoryFromConfig(
 				watcherConfig,
 				&unwrappers.RawLogUnwrapper{},

@@ -113,9 +113,10 @@ loop:
 			}
 			if watcher != nil {
 				logrus.WithFields(logrus.Fields{
-					"name":      pod.Name,
-					"uid":       pod.UID,
-					"namespace": pod.Namespace,
+					"labelselector": labelSelector,
+					"name":          pod.Name,
+					"uid":           pod.UID,
+					"namespace":     pod.Namespace,
 				}).Info("starting watcher for pod")
 				watcher.Start()
 				watcherMap[pod.UID] = watcher
@@ -262,7 +263,9 @@ func determineLogPattern(pod *v1.Pod, basePath string, legacyLogPaths bool) (str
 }
 
 func determineFilterFunc(pod *v1.Pod, containerName string, legacyLogPaths bool) func(fileName string) bool {
+
 	if containerName == "" {
+		logrus.Debug("No container name specified, no filter function needed")
 		return nil
 	}
 	if legacyLogPaths {
@@ -272,6 +275,10 @@ func determineFilterFunc(pod *v1.Pod, containerName string, legacyLogPaths bool)
 			pod.Namespace,
 			containerName,
 		)
+		logrus.WithFields(logrus.Fields{
+			"regex": re,
+		}).Debug("Container filter function")
+
 		return func(fileName string) bool {
 			ok, _ := regexp.Match(re, []byte(fileName))
 			return ok
@@ -280,12 +287,20 @@ func determineFilterFunc(pod *v1.Pod, containerName string, legacyLogPaths bool)
 
 	uid := string(pod.UID)
 	if hash, ok := pod.Annotations["kubernetes.io/config.hash"]; ok {
+		logrus.WithFields(logrus.Fields{
+			"hash": hash,
+		}).Debug("Using hash for uID")
 		uid = hash
 	}
 
 	// HACK: try the k8s 1.10 log pattern first, then fall back to our original log pattern
 	re1 := fmt.Sprintf("^/var/log/pods/%s/%s/[0-9]*\\.log", uid, regexp.QuoteMeta(containerName))
 	re2 := fmt.Sprintf("^/var/log/pods/%s/%s_[0-9]*\\.log", uid, regexp.QuoteMeta(containerName))
+	logrus.WithFields(logrus.Fields{
+		"regex1": re1,
+		"regex2": re2,
+	}).Debug("Container filter function")
+
 	return func(fileName string) bool {
 		ok, _ := regexp.Match(re1, []byte(fileName))
 		if ok {
