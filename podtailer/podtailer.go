@@ -156,13 +156,12 @@ func (pt *PodSetTailer) Stop() {
 	pt.wg.Wait()
 }
 
+// If you change the log pattern, make sure to check that the filter pattern still works
+// (in determineFilterFunc)
 func determineLogPattern(pod *v1.Pod, basePath string, legacyLogPaths bool) (string, error) {
 	if basePath == "" {
 		basePath = logsBasePath
 	}
-	logrus.WithFields(logrus.Fields{
-		"basePath": basePath,
-	}).Debug("Using basepath")
 
 	// Legacy pattern was:
 	// /var/log/containers/<pod_name>_<pod_namespace>_<container_name>-<container_id>.log`
@@ -175,9 +174,6 @@ func determineLogPattern(pod *v1.Pod, basePath string, legacyLogPaths bool) (str
 	// If it exists, assume this log patern
 	namespaceNameUIDPath := filepath.Join(basePath, "pods", fmt.Sprintf("%s_%s_%s", pod.Namespace, pod.Name, pod.UID))
 	if _, err := os.Stat(namespaceNameUIDPath); err == nil {
-		logrus.WithFields(logrus.Fields{
-			"namespaceNameUIDPath": namespaceNameUIDPath,
-		}).Debug("Using path")
 		return filepath.Join(namespaceNameUIDPath, "*", "*"), nil
 	}
 
@@ -187,9 +183,6 @@ func determineLogPattern(pod *v1.Pod, basePath string, legacyLogPaths bool) (str
 		// Some newer system pods use NAMESPACE_NAME_HASH, so we have to support that too
 		namespaceNameHashPath := filepath.Join(basePath, "pods", fmt.Sprintf("%s_%s_%s", pod.Namespace, pod.Name, hash))
 		if _, err := os.Stat(namespaceNameHashPath); err == nil {
-			logrus.WithFields(logrus.Fields{
-				"namespaceNameHashPath": namespaceNameHashPath,
-			}).Debug("Using path")
 			return filepath.Join(namespaceNameHashPath, "*", "*"), nil
 		}
 		hpath := filepath.Join(basePath, "pods", hash)
@@ -242,10 +235,6 @@ func determineLogPattern(pod *v1.Pod, basePath string, legacyLogPaths bool) (str
 				// if we find at least one directory in the path, assume k8s
 				// 1.10 pattern
 				if s.IsDir() {
-					logrus.WithFields(logrus.Fields{
-						"upath":    upath,
-						"wildcard": "*/*",
-					}).Debug("Using path")
 					return filepath.Join(upath, "*", "*"), nil
 				}
 			}
@@ -253,16 +242,12 @@ func determineLogPattern(pod *v1.Pod, basePath string, legacyLogPaths bool) (str
 
 		// older pattern is
 		// /var/log/pods/<podUID>/<containerName>_<instance#>.log
-		logrus.WithFields(logrus.Fields{
-			"upath":    upath,
-			"wildcard": "*",
-		}).Debug("Using path")
 		return filepath.Join(upath, "*"), nil
 	}
 	return "", fmt.Errorf("Could not find specified log path for pod %s", pod.UID)
 }
 
-func determineFilterFunc(pod *v1.Pod, containerName string, legacyLogPaths bool) func(fileName string) bool {
+func determineFilterFunc(pod *v1.Pod, basePath string, containerName string, legacyLogPaths bool) func(fileName string) bool {
 
 	if containerName == "" {
 		logrus.Debug("No container name specified, no filter function needed")
@@ -270,7 +255,8 @@ func determineFilterFunc(pod *v1.Pod, containerName string, legacyLogPaths bool)
 	}
 	if legacyLogPaths {
 		re := fmt.Sprintf(
-			"^/var/log/containers/%s_%s_%s-.+\\.log",
+			"^%s/containers/%s_%s_%s-.+\\.log",
+			basePath,
 			pod.Name,
 			pod.Namespace,
 			containerName,
@@ -293,12 +279,15 @@ func determineFilterFunc(pod *v1.Pod, containerName string, legacyLogPaths bool)
 		uid = hash
 	}
 
-	// HACK: try the k8s 1.10 log pattern first, then fall back to our original log pattern
-	re1 := fmt.Sprintf("^/var/log/pods/%s/%s/[0-9]*\\.log", uid, regexp.QuoteMeta(containerName))
-	re2 := fmt.Sprintf("^/var/log/pods/%s/%s_[0-9]*\\.log", uid, regexp.QuoteMeta(containerName))
+	// HACK: try the https://github.com/kubernetes/kubernetes/pull/74441 log pattern
+	re1 := fmt.Sprintf("^%s/pods/%s_%s_%s/%s/[0-9]*\\.log", basePath, pod.Namespace, pod.Name, uid, regexp.QuoteMeta(containerName))
+	// HACK: try the k8s 1.10 log pattern next, then fall back to our original log pattern
+	re2 := fmt.Sprintf("^%s/pods/%s/%s/[0-9]*\\.log", basePath, uid, regexp.QuoteMeta(containerName))
+	re3 := fmt.Sprintf("^%s/pods/%s/%s_[0-9]*\\.log", basePath, uid, regexp.QuoteMeta(containerName))
 	logrus.WithFields(logrus.Fields{
 		"regex1": re1,
 		"regex2": re2,
+		"regex3": re3,
 	}).Debug("Container filter function")
 
 	return func(fileName string) bool {
@@ -307,6 +296,10 @@ func determineFilterFunc(pod *v1.Pod, containerName string, legacyLogPaths bool)
 			return ok
 		}
 		ok, _ = regexp.Match(re2, []byte(fileName))
+		if ok {
+			return ok
+		}
+		ok, _ = regexp.Match(re3, []byte(fileName))
 		return ok
 	}
 }
@@ -320,7 +313,7 @@ func (pt *PodSetTailer) watcherForPod(pod *v1.Pod, containerName string, podWatc
 
 	// only watch logs for containers matching the given name, if
 	// one is specified
-	filterFunc := determineFilterFunc(pod, containerName, pt.legacyLogPaths)
+	filterFunc := determineFilterFunc(pod, logsBasePath, containerName, pt.legacyLogPaths)
 
 	additionalProcessors := []processors.Processor{
 		&processors.KubernetesMetadataProcessor{
